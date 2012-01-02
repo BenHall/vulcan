@@ -91,6 +91,10 @@ app.post('/make', function(request, response, next) {
   }
 });
 
+app.get('/info', function(request, response, next) {
+    response.write("Vulcan Build Server");
+    response.end();
+});
 // download build output
 app.get('/output/:id', function(request, response, next) {
 
