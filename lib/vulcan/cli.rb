@@ -19,8 +19,7 @@ if no COMMAND is specified, a sensible default will be chosen for you
   method_option :name,    :aliases => "-n", :desc => "the name of the library (defaults ot the directory name)"
   method_option :output,  :aliases => "-o", :desc => "output build artifacts to this file"
   method_option :prefix,  :aliases => "-p", :desc => "the build/install --prefix of the software"
-  method_option :source,  :aliases => "-s", :desc => "the source directory to build from"
-  method_option :verbose, :aliases => "-v", :desc => "show the full build output", :type => :boolean
+  method_option :source,  :aliases => "-s", :desc => "the source directory or tarball to build from"
 
   def build
     app = read_config[:app] || "need a server first, use vulcan create"
@@ -33,33 +32,39 @@ if no COMMAND is specified, a sensible default will be chosen for you
     server  = URI.parse(ENV["MAKE_SERVER"] || "http://#{app}.herokuapp.com")
 
     Dir.mktmpdir do |dir|
-      puts ">> Packaging local directory"
-      %x{ cd #{source} && tar czvf #{dir}/input.tgz . 2>&1 }
+      tarball = source
+      if (File.directory?(source))
+        tarball = "#{dir}/input.tgz"
+        puts ">> Packaging local directory to #{tarball}"
+        %x{ cd #{source} && tar czvf #{tarball} . 2>&1 }
+      end
 
       puts ">> Uploading code for build"
-      File.open("#{dir}/input.tgz", "r") do |input|
+      File.open(tarball, "r") do |input|
         request = Net::HTTP::Post::Multipart.new "/make",
           "code" => UploadIO.new(input, "application/octet-stream", "input.tgz"),
           "command" => command,
           "prefix" => prefix,
           "secret" => config[:secret]
 
-        puts ">> Building with: #{command}"
+        puts ">> Building with: #{command} on #{server.host}:#{server.port}"
         response = Net::HTTP.start(server.host, server.port) do |http|
           http.request(request) do |response|
             response.read_body do |chunk|
-              print chunk if options[:verbose]
+              print chunk 
             end
+            puts response.inspect
           end
         end
 
         error "Unknown error, no build output given" unless response["X-Make-Id"]
 
-        puts ">> Downloading build artifacts to: #{output}"
+        build_artifacts = "#{server}/output/#{response["X-Make-Id"]}"
+        puts ">> Downloading build artifacts #{build_artifacts} to: #{output}"
 
         File.open(output, "w") do |output|
           begin
-            output.print RestClient.get("#{server}/output/#{response["X-Make-Id"]}")
+            output.print RestClient.get(build_artifacts);
           rescue Exception => ex
             puts ex.inspect
           end
