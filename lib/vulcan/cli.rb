@@ -20,55 +20,36 @@ if no COMMAND is specified, a sensible default will be chosen for you
   method_option :output,  :aliases => "-o", :desc => "output build artifacts to this file"
   method_option :prefix,  :aliases => "-p", :desc => "the build/install --prefix of the software"
   method_option :source,  :aliases => "-s", :desc => "the source directory or tarball to build from"
+  method_option :rebuild,  :aliases => "-r", :desc => "rebuilds the provided id"
 
   def build
     app = read_config[:app] || "need a server first, use vulcan create"
 
     source  = options[:source]  || Dir.pwd
     name    = options[:name]    || File.basename(source)
+    rebuild_id  = options[:rebuild]  || 0
     output  = options[:output]  || "/tmp/#{name}.tgz"
     prefix  = options[:prefix]  || "/app/vendor/#{name}"
     command = options[:command] || "./configure --prefix #{prefix} && make install"
     server  = URI.parse(ENV["MAKE_SERVER"] || "http://#{app}.herokuapp.com")
+        
+    makeId = nil
+    if(rebuild_id == 0)
+      makeId = upload_and_build(source, command, prefix, server)
+    else
+      makeId = rebuild(rebuild_id, server)
+    end
 
-    Dir.mktmpdir do |dir|
-      tarball = source
-      if (File.directory?(source))
-        tarball = "#{dir}/input.tgz"
-        puts ">> Packaging local directory to #{tarball}"
-        %x{ cd #{source} && tar czvf #{tarball} . 2>&1 }
-      end
+    error "Unknown error, no build output given" unless makeId
 
-      puts ">> Uploading code for build"
-      File.open(tarball, "r") do |input|
-        request = Net::HTTP::Post::Multipart.new "/make",
-          "code" => UploadIO.new(input, "application/octet-stream", "input.tgz"),
-          "command" => command,
-          "prefix" => prefix,
-          "secret" => config[:secret]
+    build_artifacts = "#{server}/output/#{makeId}"
+    puts ">> Downloading build artifacts #{build_artifacts} to: #{output}"
 
-        puts ">> Building with: #{command} on #{server.host}:#{server.port}"
-        response = Net::HTTP.start(server.host, server.port) do |http|
-          http.request(request) do |response|
-            response.read_body do |chunk|
-              print chunk 
-            end
-            puts response.inspect
-          end
-        end
-
-        error "Unknown error, no build output given" unless response["X-Make-Id"]
-
-        build_artifacts = "#{server}/output/#{response["X-Make-Id"]}"
-        puts ">> Downloading build artifacts #{build_artifacts} to: #{output}"
-
-        File.open(output, "w") do |output|
-          begin
-            output.print RestClient.get(build_artifacts);
-          rescue Exception => ex
-            puts ex.inspect
-          end
-        end
+    File.open(output, "w") do |output|
+      begin
+        output.print RestClient.get(build_artifacts);
+      rescue Exception => ex
+        puts ex.inspect
       end
     end
   rescue Errno::EPIPE
@@ -124,6 +105,7 @@ update the build server
     end
 
     Dir.mktmpdir do |dir|
+      puts("Deploying from #{dir}");
       Dir.chdir(dir) do
         api_key = %x{ env BUNDLE_GEMFILE= heroku credentials 2>&1 }.chomp
         error "invalid api key detected, try running `heroku credentials`" if api_key =~ / /
@@ -176,5 +158,54 @@ private
   def server_path
     File.expand_path("../../../server", __FILE__)
   end
+
+  def upload_and_build(source, command, prefix, server)
+    Dir.mktmpdir do |dir|
+      tarball = source
+      if (File.directory?(source))
+        tarball = "#{dir}/input.tgz"
+        puts ">> Packaging local directory to #{tarball}"
+        %x{ cd #{source} && tar czvf #{tarball} . 2>&1 }
+      end
+
+      puts ">> Uploading code for build"
+      File.open(tarball, "r") do |input|
+        request = Net::HTTP::Post::Multipart.new "/make",
+          "code" => UploadIO.new(input, "application/octet-stream", "input.tgz"),
+          "command" => command,
+          "prefix" => prefix,
+          "secret" => config[:secret]
+
+        puts ">> Building with: #{command} on #{server.host}:#{server.port}"
+        response = Net::HTTP.start(server.host, server.port) do |http|
+          http.request(request) do |response|
+            response.read_body do |chunk|
+              print chunk 
+            end
+            puts response.inspect
+          end
+        end
+        return response["X-Make-Id"]
+      end
+    end
+  end
+
+  def rebuild(id, server)
+    request = Net::HTTP::Post::Multipart.new "/rebuild/" + id,
+      "secret" => config[:secret]
+
+    puts ">> Rebuilding #{id} on #{server.host}:#{server.port}"
+    response = Net::HTTP.start(server.host, server.port) do |http|
+      http.request(request) do |response|
+        response.read_body do |chunk|
+          print chunk 
+        end
+        puts response.inspect
+      end
+    end
+    
+    return response["X-Make-Id"]
+  end
+
 
 end

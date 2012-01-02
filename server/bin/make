@@ -26,9 +26,14 @@ Dir.mktmpdir do |dir|
 
     FileUtils.mkdir_p "input"
 
+    build_resp = "";
+
     Dir.chdir("input") do
       %x{ tar xzf ../input.tgz 2>&1 }
-      system command
+      begin
+        build_resp = system command
+      rescue
+      end
     end
 
     Dir.chdir(prefix) do

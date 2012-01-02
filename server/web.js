@@ -22,8 +22,37 @@ var couchdb_options = couchdb_url.auth ?
 var db = new(cradle.Connection)(couchdb_url.hostname, couchdb_url.port || 5984, couchdb_options).database('make');
 db.create();
 
+// POST /rebuild starts a build
+app.post('/rebuild/:id', function(request, response) {
+    var id = request.params.id;
+    console.log("Rebuilding: " + id);
+    // form handler
+    request.form.complete(function(err, fields, files) {
+      // spawn bin/make with this build id
+      var ls = spawner.spawn('bin/make ' + id, function(err) {
+        response.write("could not spawn for ID #{id}: " + err);
+        response.send(500);
+        });
+
+      ls.on('error', function(error) {
+        response.write("error for ID #{id}: " + err);
+        response.send(500);
+        });
+
+      ls.on('data', function(data) {
+        response.write(data);
+        });
+
+      ls.on('exit', function(code) {
+        response.end();
+        });
+      response.header('X-Make-Id', id);
+    });
+});
+
 // POST /make starts a build
 app.post('/make', function(request, response, next) {
+  console.log("Got");
 
   // require a form
   if (! request.form) {
@@ -50,6 +79,7 @@ app.post('/make', function(request, response, next) {
         // create a couchdb documents for this build
         db.save(id, { command:command, prefix:prefix }, function(err, doc) {
           if (err) { return next(err); }
+          console.log("Building: " + id);
 
           // save the input tarball as an attachment
           db.saveAttachment(
@@ -63,12 +93,12 @@ app.post('/make', function(request, response, next) {
 
               // spawn bin/make with this build id
               var ls = spawner.spawn('bin/make ' + id, function(err) {
-                response.write('could not spawn: ' + err);
+                response.write("could not spawn for ID #{id}: " + err);
                 response.send(500);
               });
 
               ls.on('error', function(error) {
-                response.write('error: ' + err);
+                response.write("error for ID #{id}: " + err);
                 response.send(500);
               });
 
@@ -92,9 +122,10 @@ app.post('/make', function(request, response, next) {
 });
 
 app.get('/info', function(request, response, next) {
-    response.write("Vulcan Build Server");
+    response.write("Vulcan Build Server <!-- " + process.env.CLOUDANT_URL + " -->");
     response.end();
 });
+
 // download build output
 app.get('/output/:id', function(request, response, next) {
 
